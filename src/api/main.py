@@ -2,15 +2,22 @@
 API Básica usando FastAPI para servir el modelo entrenado.
 """
 
+import sys
+from pathlib import Path
+
+import joblib
+import numpy as np
+import pandas as pd
 from fastapi import FastAPI
 from pydantic import BaseModel
-import joblib
-import pandas as pd
+
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from src.features.build_features import clean_data, create_features, encode_categoricals
 
 # Inicializamos la app
 app = FastAPI(title="API de Predicción de Precios de Vivienda (California)", version="1.0")
 
-# INSTRUCCIONES: Define el esquema de datos esperado por la API (Las variables X que usa tu modelo)
+# Esquema de entrada: variables crudas tal como vienen del dataset
 class HousingFeatures(BaseModel):
     longitude: float
     latitude: float
@@ -20,46 +27,59 @@ class HousingFeatures(BaseModel):
     population: float
     households: float
     median_income: float
-    # Añade cualquier variable categórica o enriquecida que el modelo requiera
-    # ej: ocean_proximity: str 
-    # ej: rooms_per_household: float
+    ocean_proximity: str  # ej: "INLAND", "NEAR BAY", "<1H OCEAN", "NEAR OCEAN", "ISLAND"
 
-# Variable global para cargar el modelo
-# IMPORTANTE: Asegúrate de guardar tu modelo en "models/best_model.pkl" o ajusta la ruta
-model = None
+# Bundle global: modelo + scaler + columnas esperadas
+bundle = None
 
 @app.on_event("startup")
 def load_model():
-    """
-    Carga el modelo globalmente al iniciar el servidor usando joblib.
-    """
-    global model
+    global bundle
     try:
-        model = joblib.load("models/best_model.pkl")
+        bundle = joblib.load("models/best_model.pkl")
+        print("Modelo cargado correctamente.")
+        print(f"Columnas esperadas: {bundle['feature_cols']}")
     except Exception as e:
-        print("Advertencia: No se pudo cargar el modelo. ¿Ya lo entrenaste y guardaste?")
+        print(f"Advertencia: No se pudo cargar el modelo — {e}")
 
 @app.get("/")
 def home():
     return {"mensaje": "Bienvenido a la API del Proyecto Final de Ciencia de Datos"}
 
+@app.get("/health")
+def health():
+    return {"status": "ok", "model_loaded": bundle is not None}
+
 @app.post("/predict")
 def predict_price(features: HousingFeatures):
     """
-    INSTRUCCIONES:
-    1. Convierte el objeto 'features' (Pydantic) a un formato que Scikit-Learn entienda (ej un DataFrame o Array 2D).
-       Toma en cuenta que el modelo en producción espera exactamente las mismas columnas que usaste para entrenar.
-    2. Usa model.predict()
-    3. Retorna la predicción en un diccionario, ej: {"predicted_price": 250000.0}
+    Recibe las variables crudas de un distrito, aplica el mismo
+    preprocesamiento usado en entrenamiento y retorna la predicción.
     """
-    if model is None:
-        return {"error": "El modelo no se ha cargado."}
-    
-    # Tu código aquí para predecir
-    prediction = 0.0 # Reemplazar con model.predict()
-    
-    return {"predicted_price": prediction}
+    if bundle is None:
+        return {"error": "El modelo no se ha cargado. Ejecuta train_model.py primero."}
+
+    model       = bundle['model']
+    scaler      = bundle['scaler']
+    feature_cols = bundle['feature_cols']
+
+    # 1. Convertir input a DataFrame
+    df = pd.DataFrame([features.model_dump()])
+
+    # 2. Aplicar el mismo preprocesamiento que en entrenamiento
+    df = clean_data(df)
+    df = create_features(df)
+    df = encode_categoricals(df)
+
+    # 3. Alinear columnas con las del modelo (OHE puede generar columnas distintas)
+    df = df.reindex(columns=feature_cols, fill_value=0)
+
+    # 4. Escalar y predecir
+    X_scaled = scaler.transform(df)
+    prediction = float(model.predict(X_scaled)[0])
+
+    return {"predicted_price": round(prediction, 2)}
 
 # Instrucciones para correr la API localmente:
-# En la terminal, ejecuta:
+# En la terminal, desde la raíz del proyecto ejecuta:
 # uvicorn src.api.main:app --reload
