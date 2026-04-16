@@ -33,7 +33,7 @@ def preprocess_pipeline(df: pd.DataFrame) -> pd.DataFrame:
     df_clean = clean_data(df)
     df_featured = create_features(df_clean)
     
-    # IMPORTANTE: Aquí los alumnos deberían añadir codificación de variables categóricas
+    # IMPORTANTE: Aquí debes añadir codificación de variables categóricas
     # (ej. get_dummies para 'ocean_proximity') si no usan Pipelines de Scikit-Learn.
     
     return df_featured
